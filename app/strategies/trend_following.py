@@ -1,8 +1,11 @@
-"""Trend following via moving-average crossover.
+"""Trend following using Finnhub quote data only.
 
-Idea: hold an asset when its short MA > long MA (uptrend), exit when it crosses
-below. Used by managed-futures funds for decades; the original Donchian and
-Turtle systems are variants. Solid mid-horizon default.
+Instead of MA crossover on historical bars, we use:
+- dp: daily % change as a short-term trend signal
+- Assets with positive daily change = uptrend
+- Weight by inverse of volatility proxy (abs daily change)
+
+Simple, fast, no historical API needed.
 """
 from __future__ import annotations
 
@@ -14,12 +17,10 @@ from app.strategies.base import Strategy, TradeSignal
 class TrendFollowingStrategy(Strategy):
     template_name = "trend_following"
     default_params = {
-        "fast_ma": 20,             # Short MA window (days)
-        "slow_ma": 50,             # Long MA window (days)
-        "atr_period": 14,          # Volatility window
-        "vol_target_pct": 0.02,    # Target 2% daily portfolio vol per position
+        "min_trend_pct": 0.1,        # Min daily % change to consider "uptrend"
         "max_position_weight": 0.25,
-        "exit_threshold": 0.0,     # MA delta below which we exit
+        "rebalance_threshold": 0.03,
+        "vol_target_pct": 0.02,      # Target 2% weight per unit of daily move
     }
 
     def generate_signals(
@@ -27,33 +28,32 @@ class TrendFollowingStrategy(Strategy):
         history: dict[str, pd.DataFrame],
         current_holdings: dict[str, float],
     ) -> list[TradeSignal]:
-        signals: list[TradeSignal] = []
         in_trend: dict[str, tuple[str, float]] = {}
 
         for key, df in history.items():
-            if df is None or len(df) < self.params["slow_ma"] + 5:
+            if df is None or df.empty:
                 continue
             symbol, asset_type = key.split("|")
-            close = df["close"]
-            fast = close.rolling(self.params["fast_ma"]).mean().iloc[-1]
-            slow = close.rolling(self.params["slow_ma"]).mean().iloc[-1]
-            if pd.isna(fast) or pd.isna(slow):
+
+            if "dp" in df.columns:
+                dp = float(df["dp"].iloc[-1])
+            elif len(df) >= 2:
+                prev = df["close"].iloc[-2]
+                curr = df["close"].iloc[-1]
+                dp = ((curr - prev) / prev * 100) if prev > 0 else 0.0
+            else:
                 continue
 
-            ma_delta = (fast - slow) / slow
-
-            # Volatility-target sizing using ATR proxy (stdev of returns)
-            ret = close.pct_change().tail(self.params["atr_period"])
-            vol = ret.std() if len(ret) > 1 else 0.02
-            if vol == 0 or pd.isna(vol):
-                vol = 0.02
-            target_w = min(
-                self.params["vol_target_pct"] / vol,
-                self.params["max_position_weight"],
-            )
-
-            if ma_delta > self.params["exit_threshold"]:
+            if dp >= self.params["min_trend_pct"]:
+                # Vol-target sizing: higher daily move = smaller position
+                vol_proxy = max(abs(dp) / 100, 0.001)
+                target_w = min(
+                    self.params["vol_target_pct"] / vol_proxy,
+                    self.params["max_position_weight"],
+                )
                 in_trend[symbol] = (asset_type, target_w)
+
+        signals: list[TradeSignal] = []
 
         # Sell anything not in trend
         for sym, current_w in current_holdings.items():
@@ -61,19 +61,19 @@ class TrendFollowingStrategy(Strategy):
                 signals.append(TradeSignal(
                     symbol=sym, asset_type="stock", side="sell",
                     target_weight=0.0,
-                    rationale="Trend has reversed (fast MA below slow MA)."
+                    rationale="Daily change below trend threshold — exiting."
                 ))
 
         # Buy/adjust trending assets
         for symbol, (asset_type, target_w) in in_trend.items():
             current_w = current_holdings.get(symbol, 0.0)
-            if abs(target_w - current_w) < 0.03:
+            if abs(target_w - current_w) < self.params["rebalance_threshold"]:
                 continue
             side = "buy" if target_w > current_w else "sell"
             signals.append(TradeSignal(
                 symbol=symbol, asset_type=asset_type, side=side,
                 target_weight=target_w,
-                rationale=f"In uptrend: {self.params['fast_ma']}d MA above {self.params['slow_ma']}d MA. Vol-targeted size."
+                rationale=f"Positive daily trend — vol-targeted size {target_w*100:.1f}%."
             ))
 
         return signals

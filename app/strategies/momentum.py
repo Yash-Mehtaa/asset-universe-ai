@@ -1,8 +1,12 @@
-"""Cross-sectional momentum.
+"""Momentum strategy using Finnhub quote data only.
 
-Idea: rank assets by their recent return and hold the top N. This is one of
-the most-studied anomalies in finance (Jegadeesh & Titman 1993; Asness, Moskowitz,
-Pedersen 2013). It's a textbook short-horizon strategy and a defensible default.
+Instead of historical bars, we use:
+- dp: daily % change (momentum signal)
+- c: current price
+- pc: previous close
+
+We rank assets by their daily % change and hold the top N.
+Simple, legally clean, no historical API needed.
 """
 from __future__ import annotations
 
@@ -14,10 +18,9 @@ from app.strategies.base import Strategy, TradeSignal
 class MomentumStrategy(Strategy):
     template_name = "momentum"
     default_params = {
-        "lookback_days": 20,       # How far back to measure return
-        "top_n": 3,                # How many top performers to hold
-        "rebalance_threshold": 0.05,  # Only swap if delta > 5%
-        "min_return_threshold": 0.0,  # Don't buy if everything is negative
+        "top_n": 3,
+        "min_change_pct": 0.0,       # Only buy if daily change > this
+        "rebalance_threshold": 0.05,
         "max_position_weight": 0.30,
     }
 
@@ -26,45 +29,51 @@ class MomentumStrategy(Strategy):
         history: dict[str, pd.DataFrame],
         current_holdings: dict[str, float],
     ) -> list[TradeSignal]:
-        # Compute lookback return per symbol
-        returns: list[tuple[str, str, float]] = []  # (symbol, asset_type, return)
+        # Extract daily % change from the last row of each symbol's data
+        # history may be empty if we switched to quote-only mode —
+        # in that case we look for a 'dp' column injected by the agent runner
+        returns: list[tuple[str, str, float]] = []
+
         for key, df in history.items():
-            if df is None or len(df) < self.params["lookback_days"]:
+            if df is None or df.empty:
                 continue
             symbol, asset_type = key.split("|")
-            window = df.tail(self.params["lookback_days"])
-            if len(window) < 2:
+
+            # Use 'dp' column if available (daily % change from Finnhub quote)
+            # Otherwise fall back to last 2 rows of close price
+            if "dp" in df.columns:
+                dp = float(df["dp"].iloc[-1])
+            elif len(df) >= 2:
+                prev = df["close"].iloc[-2]
+                curr = df["close"].iloc[-1]
+                dp = ((curr - prev) / prev * 100) if prev > 0 else 0.0
+            else:
                 continue
-            ret = (window["close"].iloc[-1] / window["close"].iloc[0]) - 1
-            returns.append((symbol, asset_type, ret))
+
+            returns.append((symbol, asset_type, dp))
 
         if not returns:
             return []
 
         returns.sort(key=lambda x: x[2], reverse=True)
-        top = returns[: self.params["top_n"]]
-
-        # Filter out negative momentum if threshold says so
-        top = [t for t in top if t[2] >= self.params["min_return_threshold"]]
+        top = [r for r in returns[:self.params["top_n"]]
+               if r[2] >= self.params["min_change_pct"]]
 
         if not top:
-            # All negative — go to cash by closing all positions
             return [
                 TradeSignal(
                     symbol=sym, asset_type="stock", side="sell",
                     target_weight=0.0,
-                    rationale="No positive momentum candidates; flatten."
+                    rationale="No positive momentum — moving to cash."
                 )
                 for sym in current_holdings
             ]
 
-        # Equal-weight the top N, capped at max_position_weight
         target_w = min(1.0 / len(top), self.params["max_position_weight"])
-        target_set = {symbol: target_w for symbol, _, _ in top}
+        target_set = {sym: target_w for sym, _, _ in top}
 
         signals: list[TradeSignal] = []
 
-        # Sell anything not in target set
         for sym, current_w in current_holdings.items():
             if sym not in target_set and current_w > 0.001:
                 signals.append(TradeSignal(
@@ -73,17 +82,15 @@ class MomentumStrategy(Strategy):
                     rationale="Dropped from momentum top-N."
                 ))
 
-        # Buy/hold target set
-        for symbol, asset_type, ret in top:
+        for symbol, asset_type, dp in top:
             current_w = current_holdings.get(symbol, 0.0)
-            delta = abs(target_set[symbol] - current_w)
-            if delta < self.params["rebalance_threshold"]:
+            if abs(target_set[symbol] - current_w) < self.params["rebalance_threshold"]:
                 continue
             side = "buy" if target_set[symbol] > current_w else "sell"
             signals.append(TradeSignal(
                 symbol=symbol, asset_type=asset_type, side=side,
                 target_weight=target_set[symbol],
-                rationale=f"Top-{self.params['top_n']} momentum: {ret*100:.1f}% over {self.params['lookback_days']}d."
+                rationale=f"Top-{self.params['top_n']} momentum: {dp:+.2f}% today."
             ))
 
         return signals
