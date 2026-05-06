@@ -24,6 +24,23 @@ def get_db():
         db.close()
 
 
+@router.post("/run/{agent_name}")
+def run_agent(agent_name: str, db: Session = Depends(get_db)) -> dict:
+    """Manually trigger a trade cycle. Public endpoint for demos."""
+    from app.agents import run_trading_cycle
+    if agent_name == "all":
+        results = {}
+        for name in ["short_term", "mid_term", "long_term"]:
+            a = db.query(Agent).filter_by(name=name).first()
+            if a:
+                results[name] = run_trading_cycle(db, a)
+        return results
+    a = db.query(Agent).filter_by(name=agent_name).first()
+    if not a:
+        raise HTTPException(404, f"Agent {agent_name} not found")
+    return run_trading_cycle(db, a)
+
+
 def _agent_or_404(db: Session, agent_id_or_name: str) -> Agent:
     if agent_id_or_name.isdigit():
         a = db.query(Agent).get(int(agent_id_or_name))
@@ -36,7 +53,6 @@ def _agent_or_404(db: Session, agent_id_or_name: str) -> Agent:
 
 @router.get("/agents")
 def list_agents(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
-    """Summary of all three agents — what the frontend uses for the cards."""
     out = []
     for a in db.query(Agent).order_by(Agent.id).all():
         cash, holdings_value, _ = current_portfolio_value(a)
@@ -119,14 +135,7 @@ def get_performance(agent_id: str, days: int = 90, db: Session = Depends(get_db)
         .order_by(PerformanceSnapshot.snapshot_date.asc())
         .all()
     )
-    series = [
-        {
-            "date": s.snapshot_date.isoformat(),
-            "value": s.total_value,
-            "pnl_pct": s.pnl_pct,
-        }
-        for s in snaps
-    ]
+    series = [{"date": s.snapshot_date.isoformat(), "value": s.total_value, "pnl_pct": s.pnl_pct} for s in snaps]
     return {
         "agent": a.name,
         "summary": performance_summary(a, db),
