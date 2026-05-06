@@ -9,7 +9,6 @@ class Config:
     # API Keys
     ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
     FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY", "")
-    ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY", "")
     COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "")
 
     # Database

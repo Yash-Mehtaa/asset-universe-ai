@@ -12,7 +12,7 @@ and adapt their strategy parameters via Anthropic's Claude API.
                               │
                               ├── APScheduler (trade + review cadences)
                               ├── Claude API (self-review)
-                              └── Finnhub / CoinGecko / Alpha Vantage
+                              └── Finnhub / CoinGecko / CoinPaprika
 ```
 
 ## The three agents
