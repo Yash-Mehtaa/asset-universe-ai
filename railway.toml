@@ -1,2 +1,2 @@
 [deploy]
-startCommand = "python -m app.bootstrap && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+startCommand = "python -m app.bootstrap && python -m app.run_once trade short_term && python -m app.run_once trade mid_term && python -m app.run_once trade long_term && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
