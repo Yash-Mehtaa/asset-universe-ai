@@ -386,6 +386,14 @@ def review_agent(agent_name: str, db: Session = Depends(get_db)) -> dict:
     from app.review import run_review
 
     if agent_name == "all":
+        # Server-side rate limit: max 1 full review sweep per day
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        manual_reviews_today = db.query(Decision).filter(
+            Decision.triggered_by == "manual",
+            Decision.created_at >= today_start
+        ).count()
+        if manual_reviews_today >= 3:
+            raise HTTPException(429, "Manual reviews already triggered today for all agents.")
         results = {}
         for name in ["short_term", "mid_term", "long_term"]:
             a = db.query(Agent).filter_by(name=name).first()
@@ -402,6 +410,16 @@ def review_agent(agent_name: str, db: Session = Depends(get_db)) -> dict:
     a = db.query(Agent).filter_by(name=agent_name).first()
     if not a:
         raise HTTPException(404, f"Agent {agent_name} not found")
+
+    # Server-side rate limit: max 1 manual review per agent per day
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    reviews_today = db.query(Decision).filter(
+        Decision.agent_id == a.id,
+        Decision.triggered_by == "manual",
+        Decision.created_at >= today_start
+    ).count()
+    if reviews_today >= 1:
+        raise HTTPException(429, f"Manual review already triggered for {agent_name} today. Next review available tomorrow.")
 
     d = run_review(db, a, triggered_by="manual")
     return {
