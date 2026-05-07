@@ -15,7 +15,7 @@ class MomentumStrategy(Strategy):
     template_name = "momentum"
     default_params = {
         "top_n": 5,
-        "min_change_pct": 0.5,
+        "min_change_pct": 1.0,
         "rebalance_threshold": 0.02,
         "max_position_weight": 0.30,
     }

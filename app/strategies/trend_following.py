@@ -16,7 +16,7 @@ class TrendFollowingStrategy(Strategy):
     template_name = "trend_following"
     default_params = {
         "top_n": 8,
-        "min_trend_pct": 0.1,
+        "min_trend_pct": 0.5,
         "max_position_weight": 0.20,
         "rebalance_threshold": 0.02,
     }
