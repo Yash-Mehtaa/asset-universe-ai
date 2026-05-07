@@ -165,7 +165,7 @@ Rules:
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{"role": "user", "content": prompt}]
         )
-        text = "\n".join(b.text for b in msg.content if hasattr(b, "text"))
+        text = "\n".join(b.text for b in msg.content if hasattr(b, "text") and b.text is not None)
         # Strip code fences if present
         text = re.sub(r"```json|```", "", text).strip()
         match = re.search(r'\{.*\}', text, re.DOTALL)
