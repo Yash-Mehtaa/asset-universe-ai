@@ -1,2 +1,2 @@
 [deploy]
-startCommand = "python -m app.bootstrap && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+startCommand = "python -m app.bootstrap && python -c \"import sqlite3; conn = sqlite3.connect('/data/asset_universe_ai.db'); conn.execute('ALTER TABLE trades ADD COLUMN realized_pnl REAL'); conn.execute('ALTER TABLE trades ADD COLUMN ai_reasoning TEXT'); conn.commit(); conn.close(); print('Migration done')\" && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
