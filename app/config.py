@@ -24,7 +24,7 @@ class Config:
     CLAUDE_MODEL = "claude-opus-4-7"
 
     # Risk guardrails
-    MAX_POSITION_PCT = 0.25          # No single position > 20% of portfolio
+    MAX_POSITION_PCT = 0.50          # No single position > 20% of portfolio
     MIN_CASH_FLOOR_PCT = 0.05        # Always keep 5% in cash
     MAX_DAILY_TURNOVER_PCT = 0.60    # Don't trade more than 50% of portfolio per day
     EMERGENCY_DRAWDOWN_PCT = 0.15    # Trigger off-cycle review at 15% drawdown
