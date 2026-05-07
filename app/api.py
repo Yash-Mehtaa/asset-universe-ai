@@ -378,4 +378,35 @@ def get_timeline(limit: int = 30, db: Session = Depends(get_db)) -> list[dict]:
         })
 
     items.sort(key=lambda x: x["timestamp"], reverse=True)
-    return items[:limit]
+    return items[:limit]	
+
+@router.post("/review/{agent_name}")
+def review_agent(agent_name: str, db: Session = Depends(get_db)) -> dict:
+    """Trigger Claude strategy review for one or all agents."""
+    from app.review import run_review
+
+    if agent_name == "all":
+        results = {}
+        for name in ["short_term", "mid_term", "long_term"]:
+            a = db.query(Agent).filter_by(name=name).first()
+            if a:
+                d = run_review(db, a, triggered_by="manual")
+                results[name] = {
+                    "action": d.action,
+                    "reasoning": d.reasoning,
+                    "applied_changes": d.applied_changes,
+                    "rejected_reason": d.rejected_reason,
+                }
+        return results
+
+    a = db.query(Agent).filter_by(name=agent_name).first()
+    if not a:
+        raise HTTPException(404, f"Agent {agent_name} not found")
+
+    d = run_review(db, a, triggered_by="manual")
+    return {
+        "action": d.action,
+        "reasoning": d.reasoning,
+        "applied_changes": d.applied_changes,
+        "rejected_reason": d.rejected_reason,
+    }
