@@ -447,8 +447,12 @@ def get_catalyst_events(db: Session = Depends(get_db)) -> list[dict]:
 
 @router.post("/catalyst/scan")
 def trigger_catalyst_scan(db: Session = Depends(get_db)) -> dict:
-    """Manually trigger the catalyst scan (for testing)."""
+    from app.db import CatalystEvent
     from app.catalyst import run_catalyst_scan
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    existing = db.query(CatalystEvent).filter(CatalystEvent.scan_date >= today_start).first()
+    if existing:
+        return {"status": "already_scanned", "message": "Catalyst scan already ran today.", "events_found": 0}
     events = run_catalyst_scan(db)
     return {"status": "ok", "events_found": len(events)}
 
@@ -562,8 +566,12 @@ def get_catalyst_events(db: Session = Depends(get_db)) -> list[dict]:
 
 @router.post("/catalyst/scan")
 def trigger_catalyst_scan(db: Session = Depends(get_db)) -> dict:
-    """Manually trigger the catalyst scan (for testing)."""
+    from app.db import CatalystEvent
     from app.catalyst import run_catalyst_scan
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    existing = db.query(CatalystEvent).filter(CatalystEvent.scan_date >= today_start).first()
+    if existing:
+        return {"status": "already_scanned", "message": "Catalyst scan already ran today.", "events_found": 0}
     events = run_catalyst_scan(db)
     return {"status": "ok", "events_found": len(events)}
 
