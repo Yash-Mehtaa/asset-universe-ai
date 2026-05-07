@@ -1,2 +1,2 @@
 [deploy]
-startCommand = "python -m app.bootstrap && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+startCommand = "python -m app.bootstrap && python -c \"from app.db import SessionLocal, Agent, Holding; db = SessionLocal(); [setattr(a, 'cash', a.cash * 10) or setattr(a, 'starting_capital', 100000) for a in db.query(Agent).all()]; db.commit(); db.close(); print('Capital updated')\" && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
