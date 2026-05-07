@@ -36,7 +36,6 @@ def run_agent(agent_name: str, db: Session = Depends(get_db)) -> dict:
             a = db.query(Agent).filter_by(name=name).first()
             if a:
                 result = run_trading_cycle(db, a)
-                # Generate AI reasoning for any new trades
                 recent_trades = (
                     db.query(Trade)
                     .filter_by(agent_id=a.id)
@@ -57,7 +56,6 @@ def run_agent(agent_name: str, db: Session = Depends(get_db)) -> dict:
 
     result = run_trading_cycle(db, a)
 
-    # Generate AI reasoning for new trades
     recent_trades = (
         db.query(Trade)
         .filter_by(agent_id=a.id)
@@ -89,17 +87,16 @@ def run_agent(agent_name: str, db: Session = Depends(get_db)) -> dict:
 
 
 def generate_no_trade_reason(agent_name: str, result: dict) -> str:
-    """Generate a plain-English explanation for why no trades were made."""
     from app.config import config
     from anthropic import Anthropic
     client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
     signals = result.get("n_signals", 0)
     rejected = result.get("n_rejected", 0)
-    prompt = f"""You are an AI investment agent ({agent_name.replace('_', ' ')}). 
-You just ran a trade cycle and made NO trades. 
+    prompt = f"""You are an AI investment agent ({agent_name.replace('_', ' ')}).
+You just ran a trade cycle and made NO trades.
 Signals generated: {signals}, Signals rejected by risk controls: {rejected}.
 
-Write 2-3 sentences explaining why you chose not to trade right now. 
+Write 2-3 sentences explaining why you chose not to trade right now.
 Be specific — mention market conditions, your strategy requirements, or risk controls.
 Write in first person as the AI agent. Be honest and educational."""
 
@@ -112,6 +109,71 @@ Write in first person as the AI agent. Be honest and educational."""
         return msg.content[0].text.strip()
     except Exception:
         return f"No trades executed this cycle. {signals} signals were analyzed but {rejected} were rejected by risk controls. Market conditions did not meet the strategy's requirements at this time."
+
+
+@router.post("/calculate")
+def calculate_allocation(payload: dict, db: Session = Depends(get_db)) -> dict:
+    """What would the AI buy with $X? Claude generates a hypothetical allocation with news."""
+    import json
+    import re
+    from app.config import config
+    from anthropic import Anthropic
+
+    amount = payload.get("amount", 10000)
+    strategy = payload.get("strategy", "momentum")
+
+    strategy_descriptions = {
+        "momentum": "momentum — buy the strongest recent performers, the stocks moving up the most today",
+        "trend_following": "trend following — buy assets in clear uptrends based on moving averages",
+        "risk_parity": "risk parity — diversify across asset classes weighted by inverse volatility",
+    }
+    strategy_desc = strategy_descriptions.get(strategy, strategy)
+
+    client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    prompt = f"""You are an AI investment agent using a {strategy_desc} strategy.
+A user wants to invest ${amount:,.0f} right now today.
+
+First, search the web for: today's top performing stocks, current market conditions, biggest movers right now.
+
+Then, based on what you find, create a specific investment allocation.
+
+Respond with ONLY a JSON object in this exact format:
+{{
+  "allocations": [
+    {{
+      "symbol": "AAPL",
+      "name": "Apple Inc",
+      "amount": 3000,
+      "pct": 30,
+      "reason": "Explain in 2-3 sentences why you'd buy this RIGHT NOW based on today's news and market conditions. Be specific — mention actual current events, price movements, or catalysts you found."
+    }}
+  ],
+  "summary": "2-3 sentence explanation of your overall strategy and why these picks make sense together right now."
+}}
+
+Rules:
+- Include exactly 3-5 positions
+- Amounts must sum to exactly {amount}
+- Use real ticker symbols
+- Reasons must reference actual current news or market data you found
+- No markdown, no explanation outside the JSON"""
+
+    try:
+        msg = client.messages.create(
+            model=config.CLAUDE_MODEL,
+            max_tokens=2000,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            messages=[{"role": "user", "content": prompt}]
+        )
+        text = "\n".join(b.text for b in msg.content if hasattr(b, "text"))
+        # Strip code fences if present
+        text = re.sub(r"```json|```", "", text).strip()
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            return json.loads(match.group())
+        return {"error": "Could not parse response", "raw": text[:500]}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 def _agent_or_404(db: Session, agent_id_or_name: str) -> Agent:
@@ -255,3 +317,50 @@ def get_decisions(agent_id: str, limit: int = 10, db: Session = Depends(get_db))
         }
         for d in decisions
     ]
+
+
+@router.get("/timeline")
+def get_timeline(limit: int = 30, db: Session = Depends(get_db)) -> list[dict]:
+    """Combined feed of all trades and decisions across all agents, newest first."""
+    items = []
+
+    trades = (
+        db.query(Trade)
+        .order_by(Trade.executed_at.desc())
+        .limit(limit)
+        .all()
+    )
+    for t in trades:
+        agent = db.query(Agent).get(t.agent_id)
+        items.append({
+            "type": "trade",
+            "agent_name": agent.name if agent else "unknown",
+            "symbol": t.symbol,
+            "side": t.side,
+            "price": t.price,
+            "notional": t.notional,
+            "rationale": t.rationale,
+            "ai_reasoning": t.ai_reasoning,
+            "realized_pnl": t.realized_pnl,
+            "timestamp": t.executed_at.isoformat(),
+        })
+
+    decisions = (
+        db.query(Decision)
+        .order_by(Decision.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    for d in decisions:
+        agent = db.query(Agent).get(d.agent_id)
+        items.append({
+            "type": "decision",
+            "agent_name": agent.name if agent else "unknown",
+            "action": d.action,
+            "reasoning": d.reasoning,
+            "triggered_by": d.triggered_by,
+            "timestamp": d.created_at.isoformat(),
+        })
+
+    items.sort(key=lambda x: x["timestamp"], reverse=True)
+    return items[:limit]
