@@ -39,6 +39,45 @@ def _run_agent_by_name(name: str, mode: str = "trade") -> None:
         db.close()
 
 
+def _run_catalyst_scan() -> None:
+    """Run the daily catalyst scan."""
+    from app.catalyst import run_catalyst_scan
+    db = SessionLocal()
+    try:
+        events = run_catalyst_scan(db)
+        log.info("catalyst scan complete: %d events", len(events))
+    except Exception:
+        log.exception("catalyst scan failed")
+    finally:
+        db.close()
+
+
+def _run_weekly_review_all() -> None:
+    """Run weekly review for all agents and build the summary."""
+    from app.review import run_review, _get_market_outlook, _build_weekly_summary
+    db = SessionLocal()
+    try:
+        all_decisions = []
+        for name in ["short_term", "mid_term", "long_term"]:
+            agent = db.query(Agent).filter_by(name=name).first()
+            if agent and agent.is_active:
+                d = run_review(db, agent, triggered_by="weekly_scheduled")
+                all_decisions.append({
+                    "agent": name,
+                    "action": d.action,
+                    "reasoning": d.reasoning,
+                    "applied_changes": d.applied_changes,
+                })
+                log.info("weekly review %s -> %s", name, d.action)
+        outlook = _get_market_outlook(db)
+        _build_weekly_summary(db, all_decisions, outlook)
+        log.info("weekly review summary saved")
+    except Exception:
+        log.exception("weekly review all failed")
+    finally:
+        db.close()
+
+
 def _configure_schedule(scheduler: BackgroundScheduler) -> None:
     """Wire each agent's cadence.
 
@@ -83,6 +122,20 @@ def _configure_schedule(scheduler: BackgroundScheduler) -> None:
         _run_agent_by_name, args=["long_term", "review"],
         trigger=CronTrigger(month="1,4,7,10", day=1, hour=22, minute=0),
         id="long_term_review", replace_existing=True,
+    )
+
+    # Daily catalyst scan — runs at 6:00 AM ET (11:00 UTC) every day
+    scheduler.add_job(
+        _run_catalyst_scan,
+        trigger=CronTrigger(hour=11, minute=0),
+        id="daily_catalyst_scan", replace_existing=True,
+    )
+
+    # Weekly full review of all agents + market outlook — Sundays 10 PM ET
+    scheduler.add_job(
+        _run_weekly_review_all,
+        trigger=CronTrigger(day_of_week="sun", hour=3, minute=0),
+        id="weekly_review_all", replace_existing=True,
     )
 
 

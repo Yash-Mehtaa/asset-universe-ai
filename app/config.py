@@ -20,17 +20,26 @@ class Config:
     # Frontend
     FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
-    # Anthropic model
-    CLAUDE_MODEL = "claude-opus-4-7"
+    # Anthropic model — Sonnet for cost efficiency
+    CLAUDE_MODEL = "claude-sonnet-4-5"
+
+    # Budget cap — total Claude spend per month in USD
+    MONTHLY_BUDGET_CAP_USD = 4.00
+    # Sonnet pricing (per million tokens, as of 2025)
+    COST_PER_INPUT_TOKEN = 3.00 / 1_000_000
+    COST_PER_OUTPUT_TOKEN = 15.00 / 1_000_000
 
     # Risk guardrails
-    MAX_POSITION_PCT = 0.30          # No single position > 20% of portfolio
-    MIN_CASH_FLOOR_PCT = 0.05        # Always keep 5% in cash
-    MAX_DAILY_TURNOVER_PCT = 0.60    # Don't trade more than 50% of portfolio per day
-    EMERGENCY_DRAWDOWN_PCT = 0.15    # Trigger off-cycle review at 15% drawdown
-    MAX_PARAM_CHANGE_PCT = 0.30      # Claude can't change a parameter by more than 30%/cycle
+    MAX_POSITION_PCT = 0.30
+    MIN_CASH_FLOOR_PCT = 0.05
+    MAX_DAILY_TURNOVER_PCT = 0.60
+    EMERGENCY_DRAWDOWN_PCT = 0.15
+    MAX_PARAM_CHANGE_PCT = 0.30
 
-    # Asset universe (v1)
+    # Mandatory review change: force non-keep if strategy unchanged this many days
+    MANDATORY_CHANGE_DAYS = 30
+
+    # Asset universe
     STOCK_UNIVERSE = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "JPM", "V", "WMT"]
     ETF_UNIVERSE = ["SPY", "QQQ", "VOO", "VTI", "IWM", "DIA"]
     CRYPTO_UNIVERSE = ["bitcoin", "ethereum", "solana"]

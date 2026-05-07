@@ -410,3 +410,233 @@ def review_agent(agent_name: str, db: Session = Depends(get_db)) -> dict:
         "applied_changes": d.applied_changes,
         "rejected_reason": d.rejected_reason,
     }
+
+
+# ── New endpoints ──────────────────────────────────────────────────────────────
+
+@router.get("/catalyst")
+def get_catalyst_events(db: Session = Depends(get_db)) -> list[dict]:
+    """Latest daily catalyst scan results."""
+    from app.db import CatalystEvent
+    from sqlalchemy import desc
+    # Get most recent scan date
+    latest = db.query(CatalystEvent).order_by(desc(CatalystEvent.scan_date)).first()
+    if not latest:
+        return []
+    scan_date = latest.scan_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    events = (
+        db.query(CatalystEvent)
+        .filter(CatalystEvent.scan_date >= scan_date)
+        .order_by(CatalystEvent.rank)
+        .all()
+    )
+    return [
+        {
+            "rank": e.rank,
+            "symbol": e.symbol,
+            "event_type": e.event_type,
+            "title": e.title,
+            "description": e.description,
+            "expected_impact": e.expected_impact,
+            "date_of_event": e.date_of_event,
+            "scan_date": e.scan_date.isoformat(),
+        }
+        for e in events
+    ]
+
+
+@router.post("/catalyst/scan")
+def trigger_catalyst_scan(db: Session = Depends(get_db)) -> dict:
+    """Manually trigger the catalyst scan (for testing)."""
+    from app.catalyst import run_catalyst_scan
+    events = run_catalyst_scan(db)
+    return {"status": "ok", "events_found": len(events)}
+
+
+@router.get("/review-summary")
+def get_review_summary(db: Session = Depends(get_db)) -> dict:
+    """Latest weekly review summary for the UI."""
+    from app.db import WeeklyReviewSummary
+    row = db.query(WeeklyReviewSummary).order_by(WeeklyReviewSummary.created_at.desc()).first()
+    if not row:
+        return {"available": False}
+    return {
+        "available": True,
+        "last_review_date": row.last_review_date.isoformat(),
+        "next_review_date": row.next_review_date.isoformat(),
+        "performance_analysis": row.performance_analysis,
+        "changes_made": row.changes_made or [],
+        "market_outlook": row.market_outlook or [],
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+@router.get("/agents/{agent_id}/strategy/history")
+def get_strategy_history(agent_id: str, db: Session = Depends(get_db)) -> list[dict]:
+    """All historical strategy versions for an agent."""
+    from app.db import StrategyHistory
+    a = _agent_or_404(db, agent_id)
+    history = (
+        db.query(StrategyHistory)
+        .filter_by(agent_id=a.id)
+        .order_by(StrategyHistory.changed_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": h.id,
+            "template": h.template,
+            "params": h.params,
+            "changed_at": h.changed_at.isoformat(),
+            "triggered_by": h.triggered_by,
+        }
+        for h in history
+    ]
+
+
+@router.post("/agents/{agent_id}/strategy/rollback/{history_id}")
+def rollback_strategy(agent_id: str, history_id: int, db: Session = Depends(get_db)) -> dict:
+    """Roll back an agent's strategy to a previous version."""
+    from app.db import StrategyHistory
+    a = _agent_or_404(db, agent_id)
+    hist = db.query(StrategyHistory).filter_by(id=history_id, agent_id=a.id).first()
+    if not hist:
+        raise HTTPException(404, "History entry not found")
+
+    # Save current as history first
+    db.add(StrategyHistory(
+        agent_id=a.id,
+        template=a.strategy.template,
+        params=a.strategy.params,
+        triggered_by="rollback_snapshot",
+    ))
+
+    a.strategy.template = hist.template
+    a.strategy.params = hist.params
+    a.strategy.updated_at = datetime.utcnow()
+    a.strategy.version += 1
+
+    db.commit()
+    return {"status": "rolled_back", "template": hist.template, "params": hist.params}
+
+
+@router.get("/budget")
+def get_budget(db: Session = Depends(get_db)) -> dict:
+    """Current month Claude API spend vs cap."""
+    from app.budget import budget_status
+    return budget_status(db)
+
+
+# ── New endpoints ──────────────────────────────────────────────────────────────
+
+@router.get("/catalyst")
+def get_catalyst_events(db: Session = Depends(get_db)) -> list[dict]:
+    """Latest daily catalyst scan results."""
+    from app.db import CatalystEvent
+    from sqlalchemy import desc
+    # Get most recent scan date
+    latest = db.query(CatalystEvent).order_by(desc(CatalystEvent.scan_date)).first()
+    if not latest:
+        return []
+    scan_date = latest.scan_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    events = (
+        db.query(CatalystEvent)
+        .filter(CatalystEvent.scan_date >= scan_date)
+        .order_by(CatalystEvent.rank)
+        .all()
+    )
+    return [
+        {
+            "rank": e.rank,
+            "symbol": e.symbol,
+            "event_type": e.event_type,
+            "title": e.title,
+            "description": e.description,
+            "expected_impact": e.expected_impact,
+            "date_of_event": e.date_of_event,
+            "scan_date": e.scan_date.isoformat(),
+        }
+        for e in events
+    ]
+
+
+@router.post("/catalyst/scan")
+def trigger_catalyst_scan(db: Session = Depends(get_db)) -> dict:
+    """Manually trigger the catalyst scan (for testing)."""
+    from app.catalyst import run_catalyst_scan
+    events = run_catalyst_scan(db)
+    return {"status": "ok", "events_found": len(events)}
+
+
+@router.get("/review-summary")
+def get_review_summary(db: Session = Depends(get_db)) -> dict:
+    """Latest weekly review summary for the UI."""
+    from app.db import WeeklyReviewSummary
+    row = db.query(WeeklyReviewSummary).order_by(WeeklyReviewSummary.created_at.desc()).first()
+    if not row:
+        return {"available": False}
+    return {
+        "available": True,
+        "last_review_date": row.last_review_date.isoformat(),
+        "next_review_date": row.next_review_date.isoformat(),
+        "performance_analysis": row.performance_analysis,
+        "changes_made": row.changes_made or [],
+        "market_outlook": row.market_outlook or [],
+        "created_at": row.created_at.isoformat(),
+    }
+
+
+@router.get("/agents/{agent_id}/strategy/history")
+def get_strategy_history(agent_id: str, db: Session = Depends(get_db)) -> list[dict]:
+    """All historical strategy versions for an agent."""
+    from app.db import StrategyHistory
+    a = _agent_or_404(db, agent_id)
+    history = (
+        db.query(StrategyHistory)
+        .filter_by(agent_id=a.id)
+        .order_by(StrategyHistory.changed_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": h.id,
+            "template": h.template,
+            "params": h.params,
+            "changed_at": h.changed_at.isoformat(),
+            "triggered_by": h.triggered_by,
+        }
+        for h in history
+    ]
+
+
+@router.post("/agents/{agent_id}/strategy/rollback/{history_id}")
+def rollback_strategy(agent_id: str, history_id: int, db: Session = Depends(get_db)) -> dict:
+    """Roll back an agent's strategy to a previous version."""
+    from app.db import StrategyHistory
+    a = _agent_or_404(db, agent_id)
+    hist = db.query(StrategyHistory).filter_by(id=history_id, agent_id=a.id).first()
+    if not hist:
+        raise HTTPException(404, "History entry not found")
+
+    # Save current as history first
+    db.add(StrategyHistory(
+        agent_id=a.id,
+        template=a.strategy.template,
+        params=a.strategy.params,
+        triggered_by="rollback_snapshot",
+    ))
+
+    a.strategy.template = hist.template
+    a.strategy.params = hist.params
+    a.strategy.updated_at = datetime.utcnow()
+    a.strategy.version += 1
+
+    db.commit()
+    return {"status": "rolled_back", "template": hist.template, "params": hist.params}
+
+
+@router.get("/budget")
+def get_budget(db: Session = Depends(get_db)) -> dict:
+    """Current month Claude API spend vs cap."""
+    from app.budget import budget_status
+    return budget_status(db)
