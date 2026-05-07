@@ -16,9 +16,9 @@ class Agent(Base):
     __tablename__ = "agents"
 
     id = Column(Integer, primary_key=True)
-    name = Column(String, unique=True, nullable=False)  # "short_term", "mid_term", "long_term"
-    horizon = Column(String, nullable=False)  # "short", "mid", "long"
-    cash = Column(Float, nullable=False)  # Available cash
+    name = Column(String, unique=True, nullable=False)
+    horizon = Column(String, nullable=False)
+    cash = Column(Float, nullable=False)
     starting_capital = Column(Float, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_trade_at = Column(DateTime, nullable=True)
@@ -40,9 +40,9 @@ class Holding(Base):
     id = Column(Integer, primary_key=True)
     agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
     symbol = Column(String, nullable=False)
-    asset_type = Column(String, nullable=False)  # "stock", "etf", "crypto", "commodity"
+    asset_type = Column(String, nullable=False)
     quantity = Column(Float, nullable=False)
-    avg_cost = Column(Float, nullable=False)  # Average cost basis
+    avg_cost = Column(Float, nullable=False)
     opened_at = Column(DateTime, default=datetime.utcnow)
     last_price = Column(Float, nullable=True)
     last_price_at = Column(DateTime, nullable=True)
@@ -58,12 +58,14 @@ class Trade(Base):
     agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
     symbol = Column(String, nullable=False)
     asset_type = Column(String, nullable=False)
-    side = Column(String, nullable=False)  # "buy" or "sell"
+    side = Column(String, nullable=False)
     quantity = Column(Float, nullable=False)
     price = Column(Float, nullable=False)
-    notional = Column(Float, nullable=False)  # quantity * price
-    rationale = Column(Text, nullable=True)  # Why we made this trade
-    strategy_snapshot = Column(JSON, nullable=True)  # Strategy params at time of trade
+    notional = Column(Float, nullable=False)
+    rationale = Column(Text, nullable=True)
+    strategy_snapshot = Column(JSON, nullable=True)
+    realized_pnl = Column(Float, nullable=True)  # Profit/loss on sell trades only
+    ai_reasoning = Column(Text, nullable=True)    # Claude's plain-English explanation with news
     executed_at = Column(DateTime, default=datetime.utcnow)
 
     agent = relationship("Agent", back_populates="trades")
@@ -75,9 +77,9 @@ class Strategy(Base):
 
     id = Column(Integer, primary_key=True)
     agent_id = Column(Integer, ForeignKey("agents.id"), unique=True, nullable=False)
-    template = Column(String, nullable=False)  # "momentum", "trend_following", "risk_parity", "blended"
-    params = Column(JSON, nullable=False)  # Strategy parameters as dict
-    plain_english = Column(Text, nullable=True)  # User-facing explanation
+    template = Column(String, nullable=False)
+    params = Column(JSON, nullable=False)
+    plain_english = Column(Text, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow)
     version = Column(Integer, default=1)
 
@@ -85,7 +87,7 @@ class Strategy(Base):
 
 
 class StrategyHistory(Base):
-    """Every strategy change ever. For both audit and self-learning."""
+    """Every strategy change ever."""
     __tablename__ = "strategy_history"
 
     id = Column(Integer, primary_key=True)
@@ -93,7 +95,7 @@ class StrategyHistory(Base):
     template = Column(String, nullable=False)
     params = Column(JSON, nullable=False)
     changed_at = Column(DateTime, default=datetime.utcnow)
-    triggered_by = Column(String, nullable=False)  # "scheduled_review", "emergency_drawdown", "initial"
+    triggered_by = Column(String, nullable=False)
     decision_id = Column(Integer, ForeignKey("decisions.id"), nullable=True)
 
     agent = relationship("Agent", back_populates="strategy_history")
@@ -105,20 +107,20 @@ class Decision(Base):
 
     id = Column(Integer, primary_key=True)
     agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
-    triggered_by = Column(String, nullable=False)  # "scheduled" or "emergency"
-    performance_summary = Column(JSON, nullable=False)  # Returns/sharpe/dd at decision time
-    action = Column(String, nullable=False)  # "keep", "tune", "switch", "blend"
-    reasoning = Column(Text, nullable=False)  # Claude's explanation
-    proposed_changes = Column(JSON, nullable=True)  # What Claude wanted to change
-    applied_changes = Column(JSON, nullable=True)  # What was actually applied (after validation)
-    rejected_reason = Column(Text, nullable=True)  # If proposal was rejected by guardrails
+    triggered_by = Column(String, nullable=False)
+    performance_summary = Column(JSON, nullable=False)
+    action = Column(String, nullable=False)
+    reasoning = Column(Text, nullable=False)
+    proposed_changes = Column(JSON, nullable=True)
+    applied_changes = Column(JSON, nullable=True)
+    rejected_reason = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     agent = relationship("Agent", back_populates="decisions")
 
 
 class PerformanceSnapshot(Base):
-    """Daily snapshot of portfolio value per agent. For charts and review context."""
+    """Daily snapshot of portfolio value per agent."""
     __tablename__ = "performance_snapshots"
 
     id = Column(Integer, primary_key=True)
@@ -127,9 +129,9 @@ class PerformanceSnapshot(Base):
     cash = Column(Float, nullable=False)
     holdings_value = Column(Float, nullable=False)
     total_value = Column(Float, nullable=False)
-    pnl = Column(Float, nullable=False)  # Total P&L since inception
+    pnl = Column(Float, nullable=False)
     pnl_pct = Column(Float, nullable=False)
-    benchmark_pct = Column(Float, nullable=True)  # SPY return for comparison
+    benchmark_pct = Column(Float, nullable=True)
 
     agent = relationship("Agent", back_populates="snapshots")
 

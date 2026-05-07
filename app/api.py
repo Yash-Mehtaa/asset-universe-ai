@@ -26,19 +26,92 @@ def get_db():
 
 @router.post("/run/{agent_name}")
 def run_agent(agent_name: str, db: Session = Depends(get_db)) -> dict:
-    """Manually trigger a trade cycle. Public endpoint for demos."""
+    """Manually trigger a trade cycle with AI news reasoning. Public endpoint for demos."""
     from app.agents import run_trading_cycle
+    from app.reasoning import generate_trade_reasoning
+
     if agent_name == "all":
         results = {}
         for name in ["short_term", "mid_term", "long_term"]:
             a = db.query(Agent).filter_by(name=name).first()
             if a:
-                results[name] = run_trading_cycle(db, a)
+                result = run_trading_cycle(db, a)
+                # Generate AI reasoning for any new trades
+                recent_trades = (
+                    db.query(Trade)
+                    .filter_by(agent_id=a.id)
+                    .order_by(Trade.executed_at.desc())
+                    .limit(result.get("n_trades", 0))
+                    .all()
+                )
+                for trade in recent_trades:
+                    if not trade.ai_reasoning:
+                        trade.ai_reasoning = generate_trade_reasoning(trade)
+                db.commit()
+                results[name] = result
         return results
+
     a = db.query(Agent).filter_by(name=agent_name).first()
     if not a:
         raise HTTPException(404, f"Agent {agent_name} not found")
-    return run_trading_cycle(db, a)
+
+    result = run_trading_cycle(db, a)
+
+    # Generate AI reasoning for new trades
+    recent_trades = (
+        db.query(Trade)
+        .filter_by(agent_id=a.id)
+        .order_by(Trade.executed_at.desc())
+        .limit(max(result.get("n_trades", 0), 1))
+        .all()
+    )
+    for trade in recent_trades:
+        if not trade.ai_reasoning:
+            trade.ai_reasoning = generate_trade_reasoning(trade)
+    db.commit()
+
+    return {
+        **result,
+        "trades": [
+            {
+                "symbol": t.symbol,
+                "side": t.side,
+                "price": t.price,
+                "notional": t.notional,
+                "rationale": t.rationale,
+                "realized_pnl": t.realized_pnl,
+                "ai_reasoning": t.ai_reasoning,
+            }
+            for t in recent_trades
+        ],
+        "no_trade_reason": None if result.get("n_trades", 0) > 0 else generate_no_trade_reason(agent_name, result),
+    }
+
+
+def generate_no_trade_reason(agent_name: str, result: dict) -> str:
+    """Generate a plain-English explanation for why no trades were made."""
+    from app.config import config
+    from anthropic import Anthropic
+    client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
+    signals = result.get("n_signals", 0)
+    rejected = result.get("n_rejected", 0)
+    prompt = f"""You are an AI investment agent ({agent_name.replace('_', ' ')}). 
+You just ran a trade cycle and made NO trades. 
+Signals generated: {signals}, Signals rejected by risk controls: {rejected}.
+
+Write 2-3 sentences explaining why you chose not to trade right now. 
+Be specific — mention market conditions, your strategy requirements, or risk controls.
+Write in first person as the AI agent. Be honest and educational."""
+
+    try:
+        msg = client.messages.create(
+            model=config.CLAUDE_MODEL,
+            max_tokens=200,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return msg.content[0].text.strip()
+    except Exception:
+        return f"No trades executed this cycle. {signals} signals were analyzed but {rejected} were rejected by risk controls. Market conditions did not meet the strategy's requirements at this time."
 
 
 def _agent_or_404(db: Session, agent_id_or_name: str) -> Agent:
@@ -120,6 +193,8 @@ def get_trades(agent_id: str, limit: int = 20, db: Session = Depends(get_db)) ->
             "price": t.price,
             "notional": t.notional,
             "rationale": t.rationale,
+            "realized_pnl": t.realized_pnl,
+            "ai_reasoning": t.ai_reasoning,
             "executed_at": t.executed_at.isoformat(),
         }
         for t in trades
