@@ -29,6 +29,18 @@ class Strategy:
         # Merge user params over defaults
         self.params = {**self.default_params, **(params or {})}
 
+    def _normalize_with_cap(self, raw: dict[str, float], cap: float) -> dict[str, float]:
+        """Iteratively normalize weights so none exceed cap after normalization."""
+        weights = dict(raw)
+        for _ in range(10):
+            total = sum(weights.values()) or 1.0
+            normalized = {sym: w / total for sym, w in weights.items()}
+            if all(w <= cap + 1e-9 for w in normalized.values()):
+                return normalized
+            weights = {sym: min(w, cap * total) for sym, w in weights.items()}
+        total = sum(weights.values()) or 1.0
+        return {sym: w / total for sym, w in weights.items()}
+
     def generate_signals(
         self,
         history: dict[str, pd.DataFrame],

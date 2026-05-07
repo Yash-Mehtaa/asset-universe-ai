@@ -1,12 +1,8 @@
 """Momentum strategy using Finnhub quote data only.
 
-Instead of historical bars, we use:
-- dp: daily % change (momentum signal)
-- c: current price
-- pc: previous close
-
-We rank assets by their daily % change and hold the top N.
-Simple, legally clean, no historical API needed.
+Ranks assets by daily % change, allocates proportionally to momentum
+strength. Iterative cap enforcement ensures no position exceeds max weight
+even after normalization.
 """
 from __future__ import annotations
 
@@ -18,9 +14,9 @@ from app.strategies.base import Strategy, TradeSignal
 class MomentumStrategy(Strategy):
     template_name = "momentum"
     default_params = {
-        "top_n": 3,
-        "min_change_pct": 0.0,       # Only buy if daily change > this
-        "rebalance_threshold": 0.05,
+        "top_n": 5,
+        "min_change_pct": 0.5,
+        "rebalance_threshold": 0.02,
         "max_position_weight": 0.30,
     }
 
@@ -29,18 +25,15 @@ class MomentumStrategy(Strategy):
         history: dict[str, pd.DataFrame],
         current_holdings: dict[str, float],
     ) -> list[TradeSignal]:
-        # Extract daily % change from the last row of each symbol's data
-        # history may be empty if we switched to quote-only mode —
-        # in that case we look for a 'dp' column injected by the agent runner
         returns: list[tuple[str, str, float]] = []
+        asset_types: dict[str, str] = {}
 
         for key, df in history.items():
             if df is None or df.empty:
                 continue
             symbol, asset_type = key.split("|")
+            asset_types[symbol] = asset_type
 
-            # Use 'dp' column if available (daily % change from Finnhub quote)
-            # Otherwise fall back to last 2 rows of close price
             if "dp" in df.columns:
                 dp = float(df["dp"].iloc[-1])
             elif len(df) >= 2:
@@ -62,38 +55,45 @@ class MomentumStrategy(Strategy):
         if not top:
             return [
                 TradeSignal(
-                    symbol=sym, asset_type="stock", side="sell",
+                    symbol=sym,
+                    asset_type=asset_types.get(sym, "stock"),
+                    side="sell",
                     target_weight=0.0,
-                    rationale="No positive momentum — moving to cash."
+                    rationale="No assets meeting minimum momentum threshold — moving to cash."
                 )
                 for sym in current_holdings
             ]
 
-        total_dp = sum(abs(dp) for _, _, dp in top) or 1.0
-        target_set = {
-            sym: min((abs(dp) / total_dp), self.params["max_position_weight"])
-            for sym, _, dp in top
-        }
+        raw = {sym: abs(dp) for sym, _, dp in top}
+        target_set = self._normalize_with_cap(raw, self.params["max_position_weight"])
 
         signals: list[TradeSignal] = []
+        top_syms = {sym for sym, _, _ in top}
+        rank = {sym: i + 1 for i, (sym, _, _) in enumerate(top)}
 
         for sym, current_w in current_holdings.items():
-            if sym not in target_set and current_w > 0.001:
+            if sym not in top_syms and current_w > 0.001:
                 signals.append(TradeSignal(
-                    symbol=sym, asset_type="stock", side="sell",
+                    symbol=sym,
+                    asset_type=asset_types.get(sym, "stock"),
+                    side="sell",
                     target_weight=0.0,
-                    rationale="Dropped from momentum top-N."
+                    rationale=f"{sym} dropped from momentum top-{self.params['top_n']} — exiting position."
                 ))
 
         for symbol, asset_type, dp in top:
             current_w = current_holdings.get(symbol, 0.0)
-            if abs(target_set[symbol] - current_w) < self.params["rebalance_threshold"]:
+            target_w = target_set[symbol]
+            diff = target_w - current_w
+            if abs(diff) < self.params["rebalance_threshold"]:
                 continue
-            side = "buy" if target_set[symbol] > current_w else "sell"
+            side = "buy" if diff > 0 else "sell"
             signals.append(TradeSignal(
-                symbol=symbol, asset_type=asset_type, side=side,
-                target_weight=target_set[symbol],
-                rationale=f"{symbol} momentum {dp:+.2f}% today — allocated {target_set[symbol]*100:.1f}% of portfolio (${target_set[symbol] * 100000:,.0f} target)."
+                symbol=symbol,
+                asset_type=asset_type,
+                side=side,
+                target_weight=target_w,
+                rationale=f"#{rank[symbol]} momentum pick: {symbol} up {dp:+.2f}% today. Target {target_w*100:.1f}% of portfolio."
             ))
 
         return signals

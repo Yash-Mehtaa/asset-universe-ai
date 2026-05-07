@@ -90,9 +90,11 @@ class RiskParityStrategy(Strategy):
         for sym, current_w in current_holdings.items():
             if sym not in weights and current_w > 0.001:
                 signals.append(TradeSignal(
-                    symbol=sym, asset_type="stock", side="sell",
+                    symbol=sym,
+                    asset_type=vol_proxies.get(sym, ("stock",))[0],
+                    side="sell",
                     target_weight=0.0,
-                    rationale="No longer in risk-parity universe."
+                    rationale=f"{sym} no longer in risk-parity universe — exiting position."
                 ))
 
         for sym, target_w in weights.items():
@@ -104,7 +106,7 @@ class RiskParityStrategy(Strategy):
             signals.append(TradeSignal(
                 symbol=sym, asset_type=asset_type, side=side,
                 target_weight=float(target_w),
-                rationale=f"Risk-parity rebalance to {target_w*100:.1f}% (inverse daily vol)."
+                rationale=f"Risk-parity rebalance: {sym} target {target_w*100:.1f}% (inverse vol weight)."
             ))
 
         return signals
