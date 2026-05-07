@@ -30,16 +30,24 @@ class Strategy:
         self.params = {**self.default_params, **(params or {})}
 
     def _normalize_with_cap(self, raw: dict[str, float], cap: float) -> dict[str, float]:
-        """Iteratively normalize weights so none exceed cap after normalization."""
-        weights = dict(raw)
-        for _ in range(10):
-            total = sum(weights.values()) or 1.0
-            normalized = {sym: w / total for sym, w in weights.items()}
-            if all(w <= cap + 1e-9 for w in normalized.values()):
-                return normalized
-            weights = {sym: min(w, cap * total) for sym, w in weights.items()}
-        total = sum(weights.values()) or 1.0
-        return {sym: w / total for sym, w in weights.items()}
+        """Normalize weights so none exceed cap. Excess is redistributed to uncapped items."""
+        total = sum(raw.values()) or 1.0
+        weights = {sym: w / total for sym, w in raw.items()}
+
+        for _ in range(20):
+            over = {sym: w for sym, w in weights.items() if w > cap + 1e-9}
+            if not over:
+                break
+            excess = sum(w - cap for w in over.values())
+            for sym in over:
+                weights[sym] = cap
+            uncapped = {sym: w for sym, w in weights.items() if sym not in over}
+            uncapped_total = sum(uncapped.values())
+            if uncapped_total <= 0:
+                break
+            for sym, w in uncapped.items():
+                weights[sym] = w + excess * (w / uncapped_total)
+        return weights
 
     def generate_signals(
         self,
