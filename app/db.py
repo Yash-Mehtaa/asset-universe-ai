@@ -181,47 +181,6 @@ class WeeklyReviewSummary(Base):
 
 
 
-class CatalystEvent(Base):
-    """Daily market catalyst scan results — top 5 upcoming events."""
-    __tablename__ = "catalyst_events"
-
-    id = Column(Integer, primary_key=True)
-    scan_date = Column(DateTime, default=datetime.utcnow, nullable=False)
-    rank = Column(Integer, nullable=False)  # 1-5
-    symbol = Column(String, nullable=True)
-    event_type = Column(String, nullable=False)  # earnings, fed_meeting, economic_data, etc.
-    title = Column(String, nullable=False)
-    description = Column(Text, nullable=False)
-    expected_impact = Column(String, nullable=False)  # bullish, bearish, neutral
-    date_of_event = Column(String, nullable=True)  # "2025-05-10" or "this week"
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class BudgetLog(Base):
-    """Token and cost tracking for every Claude API call."""
-    __tablename__ = "budget_log"
-
-    id = Column(Integer, primary_key=True)
-    called_at = Column(DateTime, default=datetime.utcnow)
-    endpoint = Column(String, nullable=False)  # calculate, no_trade, review, catalyst, plain_english
-    input_tokens = Column(Integer, nullable=False, default=0)
-    output_tokens = Column(Integer, nullable=False, default=0)
-    estimated_cost_usd = Column(Float, nullable=False, default=0.0)
-    agent_name = Column(String, nullable=True)
-
-
-class WeeklyReviewSummary(Base):
-    """Stores the latest weekly review output for UI display."""
-    __tablename__ = "weekly_review_summary"
-
-    id = Column(Integer, primary_key=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    last_review_date = Column(DateTime, nullable=False)
-    next_review_date = Column(DateTime, nullable=False)
-    performance_analysis = Column(Text, nullable=False)
-    changes_made = Column(JSON, nullable=True)
-    market_outlook = Column(JSON, nullable=True)  # list of {symbol, reason, direction}
-
 # Engine + session
 engine = create_engine(
     config.DATABASE_URL,
