@@ -640,3 +640,100 @@ def get_budget(db: Session = Depends(get_db)) -> dict:
     """Current month Claude API spend vs cap."""
     from app.budget import budget_status
     return budget_status(db)
+
+
+@router.post("/calculate-strategy")
+def calculate_strategy(payload: dict, db: Session = Depends(get_db)) -> dict:
+    """Run the real strategy algorithm on live prices. Same logic the agents use. Zero Claude cost."""
+    import pandas as pd
+    from app.market_data import market_data
+    from app.strategies import get_strategy
+    from app.config import config
+
+    amount = float(payload.get("amount", 10000))
+    strategy_name = payload.get("strategy", "momentum")
+
+    universe = (
+        [(s, "stock") for s in config.STOCK_UNIVERSE] +
+        [(s, "etf") for s in config.ETF_UNIVERSE] +
+        [(s, "crypto") for s in config.CRYPTO_UNIVERSE] +
+        [(s, "commodity") for s in config.COMMODITY_ETF_UNIVERSE]
+    )
+
+    # Fetch live quotes and build history dict
+    history: dict[str, pd.DataFrame] = {}
+    quotes: dict[str, dict] = {}
+    for symbol, asset_type in universe:
+        try:
+            df = market_data.get_history(symbol, asset_type)
+            history[f"{symbol}|{asset_type}"] = df
+            # Store the quote fields for response
+            if not df.empty:
+                row = df.iloc[-1]
+                quotes[symbol] = {
+                    "c": float(row.get("close", 0)),
+                    "dp": float(row.get("dp", 0)),
+                }
+        except Exception:
+            continue
+
+    if not history:
+        return {"error": "Could not fetch market data. Check Finnhub API key."}
+
+    # Use the matching agent's current params if available
+    agent_name_map = {
+        "momentum": "short_term",
+        "trend_following": "mid_term",
+        "risk_parity": "long_term",
+    }
+    agent = db.query(Agent).filter_by(name=agent_name_map.get(strategy_name, "")).first()
+    if agent and agent.strategy and agent.strategy.template == strategy_name:
+        params = agent.strategy.params
+    else:
+        params = None
+
+    try:
+        strat = get_strategy(strategy_name, params)
+    except Exception:
+        return {"error": f"Unknown strategy: {strategy_name}"}
+
+    signals = strat.generate_signals(history, current_holdings={})
+
+    buys = [s for s in signals if s.side == "buy" and s.target_weight > 0]
+    buys.sort(key=lambda s: s.target_weight, reverse=True)
+
+    if not buys:
+        return {
+            "allocations": [],
+            "summary": "The strategy found no buy signals in current market conditions. All assets are below the minimum threshold right now.",
+            "strategy": strategy_name,
+            "live_data": True,
+        }
+
+    total_w = sum(s.target_weight for s in buys)
+    allocations = []
+    for sig in buys:
+        normalized_w = sig.target_weight / total_w if total_w > 0 else 0
+        q = quotes.get(sig.symbol, {})
+        allocations.append({
+            "symbol": sig.symbol,
+            "name": sig.symbol,
+            "amount": round(amount * normalized_w),
+            "pct": round(normalized_w * 100, 1),
+            "reason": sig.rationale,
+            "current_price": q.get("c", 0),
+            "daily_change_pct": q.get("dp", 0),
+        })
+
+    strategy_summaries = {
+        "momentum": "Momentum strategy: ranked all assets by today's live daily % change from Finnhub. Strongest movers get the largest allocations proportional to their momentum score.",
+        "trend_following": "Trend following strategy: filtered assets with positive daily momentum above the minimum threshold, sized proportionally to trend strength using live Finnhub data.",
+        "risk_parity": "Risk parity strategy: sized each position by inverse daily volatility from live Finnhub data so every asset contributes equal risk to the portfolio.",
+    }
+
+    return {
+        "allocations": allocations,
+        "summary": strategy_summaries.get(strategy_name, f"{strategy_name} allocation based on live market data."),
+        "strategy": strategy_name,
+        "live_data": True,
+    }
