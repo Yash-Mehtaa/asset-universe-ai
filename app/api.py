@@ -14,6 +14,16 @@ from app.db import (
 from app.performance import current_portfolio_value, performance_summary
 
 router = APIRouter(prefix="/api", tags=["agents"])
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 @router.post("/reset")
 def reset_all_agents(db: Session = Depends(get_db)) -> dict:
     """Wipe all trades, holdings, decisions, and snapshots. Reset cash to starting capital."""
@@ -28,13 +38,6 @@ def reset_all_agents(db: Session = Depends(get_db)) -> dict:
         a.last_review_at = None
     db.commit()
     return {"status": "reset", "agents": [a.name for a in agents]}
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 @router.post("/run/{agent_name}")
@@ -179,7 +182,6 @@ Rules:
             messages=[{"role": "user", "content": prompt}]
         )
         text = "\n".join(b.text for b in msg.content if hasattr(b, "text") and b.text is not None)
-        # Strip code fences if present
         text = re.sub(r"```json|```", "", text).strip()
         match = re.search(r'\{.*\}', text, re.DOTALL)
         if match:
