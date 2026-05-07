@@ -43,7 +43,6 @@ def _format_snapshots(snaps: list[PerformanceSnapshot]) -> str:
 
 
 def _days_since_strategy_change(agent: Agent) -> int:
-    """How many days since this agent's strategy was last changed."""
     updated = agent.strategy.updated_at if agent.strategy else None
     if not updated:
         return 999
@@ -106,135 +105,15 @@ def _get_plain_english(template: str, params: dict, db: Session, agent_name: str
 
 
 def _build_weekly_summary(db: Session, all_decisions: list[dict], market_outlook: list[dict]) -> None:
-    """Save a WeeklyReviewSummary row for the UI."""
     now = datetime.utcnow()
     next_review = now + timedelta(days=7)
-
-    # Build combined performance analysis
-    analyses = [d.get("reasoning", "") for d in all_decision
-cat > ~/Desktop/asset-universe-ai/app/review.py << 'EOF'
-"""Self-review: ask Claude to evaluate the agent's recent performance and
-optionally adjust its strategy. Output is validated against guardrails before
-being applied. Mandatory change enforced if strategy unchanged for 30+ days."""
-from __future__ import annotations
-
-import json
-from datetime import datetime, timedelta
-from typing import Any
-
-from anthropic import Anthropic
-from sqlalchemy.orm import Session
-
-from app.config import config
-from app.db import Agent, Strategy, StrategyHistory, Decision, Trade, PerformanceSnapshot, WeeklyReviewSummary
-from app.performance import performance_summary
-from app.prompts import REVIEW_SYSTEM_PROMPT, REVIEW_USER_TEMPLATE, PLAIN_ENGLISH_PROMPT
-from app.strategies import STRATEGY_REGISTRY, available_templates, get_strategy
-from app.budget import log_usage, check_budget
-
-_client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
-
-
-def _format_trades(trades: list[Trade]) -> str:
-    if not trades:
-        return "(no trades yet)"
-    lines = []
-    for t in trades:
-        lines.append(
-            f"- {t.executed_at.strftime('%Y-%m-%d')} {t.side.upper()} {t.symbol} "
-            f"qty={t.quantity:.4f} @ ${t.price:.2f} — {t.rationale}"
-        )
-    return "\n".join(lines)
-
-
-def _format_snapshots(snaps: list[PerformanceSnapshot]) -> str:
-    if not snaps:
-        return "(no snapshots yet)"
-    return "\n".join(
-        f"- {s.snapshot_date.strftime('%Y-%m-%d')}: ${s.total_value:.2f} "
-        f"({s.pnl_pct*100:+.2f}%)"
-        for s in snaps
+    combined = "\n\n".join(
+        f"[{d.get('agent')}] {d.get('reasoning', '')}" for d in all_decisions
     )
-
-
-def _days_since_strategy_change(agent: Agent) -> int:
-    """How many days since this agent's strategy was last changed."""
-    updated = agent.strategy.updated_at if agent.strategy else None
-    if not updated:
-        return 999
-    return (datetime.utcnow() - updated).days
-
-
-def _validate_proposal(
-    proposal: dict[str, Any],
-    current_strategy: Strategy,
-    force_change: bool = False,
-) -> tuple[bool, str | None, dict[str, Any] | None]:
-    action = proposal.get("action")
-    if action not in ("keep", "tune", "switch", "blend"):
-        return False, f"invalid action: {action}", None
-
-    if action == "keep" and force_change:
-        return False, "mandatory change required: strategy unchanged for 30+ days, keep not allowed", None
-
-    if action == "keep":
-        return True, None, {}
-
-    new_template = proposal.get("new_template")
-    new_params = proposal.get("new_params") or {}
-
-    if action in ("switch", "blend"):
-        if new_template not in available_templates():
-            return False, f"unknown template: {new_template}", None
-
-    if action == "tune":
-        for k, v in new_params.items():
-            if k not in current_strategy.params:
-                return False, f"unknown param: {k}", None
-            current_v = current_strategy.params[k]
-            if isinstance(current_v, (int, float)) and current_v != 0:
-                pct_change = abs((v - current_v) / current_v)
-                if pct_change > config.MAX_PARAM_CHANGE_PCT:
-                    return False, f"param {k} changes by {pct_change:.1%}, exceeds {config.MAX_PARAM_CHANGE_PCT:.0%} cap", None
-
-    return True, None, {
-        "action": action,
-        "new_template": new_template,
-        "new_params": new_params,
-    }
-
-
-def _get_plain_english(template: str, params: dict, db: Session, agent_name: str) -> str:
-    try:
-        msg = _client.messages.create(
-            model=config.CLAUDE_MODEL,
-            max_tokens=200,
-            messages=[{
-                "role": "user",
-                "content": PLAIN_ENGLISH_PROMPT.format(template=template, params=params),
-            }],
-        )
-        log_usage(db, "plain_english", msg.usage.input_tokens, msg.usage.output_tokens, agent_name)
-        return msg.content[0].text.strip()
-    except Exception as e:
-        return f"{template} strategy ({e})"
-
-
-def _build_weekly_summary(db: Session, all_decisions: list[dict], market_outlook: list[dict]) -> None:
-    """Save a WeeklyReviewSummary row for the UI."""
-    now = datetime.utcnow()
-    next_review = now + timedelta(days=7)
-
-    # Build combined performance analysis
-    analyses = [d.get("reasoning", "") for d in all_decisions if d.get("reasoning")]
-    combined = "\n\n".join(f"[{d.get('agent')}] {d.get('reasoning', '')}" for d in all_decisions)
-
     changes = [
         {"agent": d.get("agent"), "action": d.get("action"), "changes": d.get("applied_changes")}
         for d in all_decisions if d.get("action") != "keep"
     ]
-
-    # Delete old summary, insert new
     db.query(WeeklyReviewSummary).delete()
     db.add(WeeklyReviewSummary(
         last_review_date=now,
@@ -247,11 +126,11 @@ def _build_weekly_summary(db: Session, all_decisions: list[dict], market_outlook
 
 
 def _get_market_outlook(db: Session) -> list[dict]:
-    """Ask Claude for top 5 expected movers this week."""
     ok, spend, cap = check_budget(db)
     if not ok:
         return []
     try:
+        import re
         msg = _client.messages.create(
             model=config.CLAUDE_MODEL,
             max_tokens=800,
@@ -265,7 +144,6 @@ direction must be: up, down, or volatile"""}],
         )
         log_usage(db, "market_outlook", msg.usage.input_tokens, msg.usage.output_tokens)
         text = "\n".join(b.text for b in msg.content if hasattr(b, "text") and b.text)
-        import re
         match = re.search(r'\[.*\]', text, re.DOTALL)
         if match:
             return json.loads(match.group())
@@ -279,7 +157,6 @@ def run_review(
     agent: Agent,
     triggered_by: str = "scheduled",
 ) -> Decision:
-    # Budget check
     ok, spend, cap = check_budget(db)
     if not ok:
         decision = Decision(
@@ -320,7 +197,11 @@ def run_review(
 
     mandatory_note = ""
     if force_change:
-        mandatory_note = f"\n\nIMPORTANT: This strategy has been unchanged for {days_unchanged} days (threshold: {config.MANDATORY_CHANGE_DAYS} days). You MUST propose a tune, switch, or blend. 'keep' is not allowed this cycle."
+        mandatory_note = (
+            f"\n\nIMPORTANT: This strategy has been unchanged for {days_unchanged} days "
+            f"(threshold: {config.MANDATORY_CHANGE_DAYS} days). "
+            "You MUST propose a tune, switch, or blend. 'keep' is not allowed this cycle."
+        )
 
     user_msg = REVIEW_USER_TEMPLATE.format(
         agent_name=agent.name,
@@ -374,7 +255,6 @@ def run_review(
 
     is_valid, reject_reason, sanitized = _validate_proposal(proposal, current_strat, force_change=force_change)
 
-    # If forced change was rejected (Claude said keep), retry once with stronger prompt
     if not is_valid and force_change and reject_reason and "mandatory" in reject_reason:
         retry_msg = user_msg + "\n\nYou responded with 'keep' but that is not allowed. You must choose tune, switch, or blend. Respond again with a valid JSON proposal."
         retry_resp = _client.messages.create(
