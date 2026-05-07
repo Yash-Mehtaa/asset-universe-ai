@@ -69,8 +69,11 @@ class MomentumStrategy(Strategy):
                 for sym in current_holdings
             ]
 
-        target_w = min(1.0 / len(top), self.params["max_position_weight"])
-        target_set = {sym: target_w for sym, _, _ in top}
+        total_dp = sum(abs(dp) for _, _, dp in top) or 1.0
+        target_set = {
+            sym: min((abs(dp) / total_dp), self.params["max_position_weight"])
+            for sym, _, dp in top
+        }
 
         signals: list[TradeSignal] = []
 
@@ -90,7 +93,7 @@ class MomentumStrategy(Strategy):
             signals.append(TradeSignal(
                 symbol=symbol, asset_type=asset_type, side=side,
                 target_weight=target_set[symbol],
-                rationale=f"Top-{self.params['top_n']} momentum: {dp:+.2f}% today."
+                rationale=f"{symbol} momentum {dp:+.2f}% today — allocated {target_set[symbol]*100:.1f}% of portfolio (${target_set[symbol] * 100000:,.0f} target)."
             ))
 
         return signals
