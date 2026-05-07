@@ -14,7 +14,20 @@ from app.db import (
 from app.performance import current_portfolio_value, performance_summary
 
 router = APIRouter(prefix="/api", tags=["agents"])
-
+@router.post("/reset")
+def reset_all_agents(db: Session = Depends(get_db)) -> dict:
+    """Wipe all trades, holdings, decisions, and snapshots. Reset cash to starting capital."""
+    agents = db.query(Agent).all()
+    for a in agents:
+        db.query(Trade).filter_by(agent_id=a.id).delete()
+        db.query(Holding).filter_by(agent_id=a.id).delete()
+        db.query(Decision).filter_by(agent_id=a.id).delete()
+        db.query(PerformanceSnapshot).filter_by(agent_id=a.id).delete()
+        a.cash = a.starting_capital
+        a.last_trade_at = None
+        a.last_review_at = None
+    db.commit()
+    return {"status": "reset", "agents": [a.name for a in agents]}
 
 def get_db():
     db = SessionLocal()
