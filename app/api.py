@@ -103,28 +103,14 @@ def run_agent(agent_name: str, db: Session = Depends(get_db)) -> dict:
 
 
 def generate_no_trade_reason(agent_name: str, result: dict) -> str:
-    from app.config import config
-    from anthropic import Anthropic
-    client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
     signals = result.get("n_signals", 0)
     rejected = result.get("n_rejected", 0)
-    prompt = f"""You are an AI investment agent ({agent_name.replace('_', ' ')}).
-You just ran a trade cycle and made NO trades.
-Signals generated: {signals}, Signals rejected by risk controls: {rejected}.
-
-Write 2-3 sentences explaining why you chose not to trade right now.
-Be specific — mention market conditions, your strategy requirements, or risk controls.
-Write in first person as the AI agent. Be honest and educational."""
-
-    try:
-        msg = client.messages.create(
-            model=config.CLAUDE_MODEL,
-            max_tokens=200,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return msg.content[0].text.strip()
-    except Exception:
-        return f"No trades executed this cycle. {signals} signals were analyzed but {rejected} were rejected by risk controls. Market conditions did not meet the strategy's requirements at this time."
+    name = agent_name.replace("_", " ").title()
+    if signals == 0:
+        return f"No signals generated this cycle. The {name} strategy scanned the full asset universe but no assets met the minimum threshold requirements. This is normal during low-volatility or off-hours market conditions."
+    if rejected == signals:
+        return f"{signals} signal{'s' if signals != 1 else ''} generated but all rejected by risk controls. The {name} strategy identified potential trades but position size limits, cash floor requirements, or turnover caps prevented execution. Capital is preserved for higher-conviction opportunities."
+    return f"{signals} signal{'s' if signals != 1 else ''} analyzed, {rejected} rejected by risk controls. The remaining signals did not meet the {name} strategy's minimum threshold for execution. No trades were made this cycle."
 
 
 @router.post("/calculate")
