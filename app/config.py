@@ -24,7 +24,7 @@ class Config:
     CLAUDE_MODEL = "claude-sonnet-4-5"
 
     # Budget cap — total Claude spend per month in USD
-    MONTHLY_BUDGET_CAP_USD = 4.00
+    MONTHLY_BUDGET_CAP_USD = 10.00
     # Sonnet pricing (per million tokens, as of 2025)
     COST_PER_INPUT_TOKEN = 3.00 / 1_000_000
     COST_PER_OUTPUT_TOKEN = 15.00 / 1_000_000
